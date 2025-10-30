@@ -1,0 +1,6 @@
+@LotoReg_HostAddress = http://localhost:5201
+
+GET {{LotoReg_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
