@@ -14,29 +14,32 @@ namespace LotoReg.Service
             _stringConexao = configuracao.GetConnectionString("DefaultConnection")!;
         }
 
-        public async Task AtualizarEmpresa(int idEmpresaSorteio, AtualizarEmpresaSorteioDto dto)
+        public async Task AtualizarEmpresa(int idUsuario, AtualizarEmpresaSorteioDto dto)
         {
             await using var conexao = new NpgsqlConnection(_stringConexao);
             await conexao.OpenAsync();
 
-            // Verifica se o usuário possui empresa
-            var queryVerificar = "SELECT id FROM empresas_sorteio WHERE id = @UsuarioId;";
-            int? empresaId = null;
+           
+            const string queryVerificar = @"
+                SELECT id FROM empresa
+                WHERE id_usuario = @IdUsuario AND categoria = 'EmpresaSorteio';
+            ";
 
+            int? empresaId = null;
             await using (var cmdVerificar = new NpgsqlCommand(queryVerificar, conexao))
             {
-                cmdVerificar.Parameters.AddWithValue("@UsuarioId", idEmpresaSorteio);
+                cmdVerificar.Parameters.AddWithValue("@IdUsuario", idUsuario);
                 var resultado = await cmdVerificar.ExecuteScalarAsync();
                 if (resultado != null)
                     empresaId = Convert.ToInt32(resultado);
             }
 
             if (empresaId == null)
-                throw new KeyNotFoundException("Empresa não encontrada para este usuário.");
+                throw new KeyNotFoundException("Empresa de sorteio não encontrada para este usuário.");
 
-            // Atualiza apenas os campos informados
-            var query = @"
-                UPDATE empresas_sorteio
+        
+            const string query = @"
+                UPDATE empresa
                 SET 
                     razao_social = COALESCE(@RazaoSocial, razao_social),
                     estado = COALESCE(@Estado, estado),
@@ -44,11 +47,11 @@ namespace LotoReg.Service
                     telefone_comercial = COALESCE(@TelefoneComercial, telefone_comercial),
                     email_contato = COALESCE(@EmailContato, email_contato),
                     site_plataforma = COALESCE(@SitePlataforma, site_plataforma)
-                WHERE id = @UsuarioId;
+                WHERE id_usuario = @IdUsuario AND categoria = 'EmpresaSorteio';
             ";
 
             await using var cmd = new NpgsqlCommand(query, conexao);
-            cmd.Parameters.AddWithValue("@UsuarioId", idEmpresaSorteio);
+            cmd.Parameters.AddWithValue("@IdUsuario", idUsuario);
             cmd.Parameters.AddWithValue("@RazaoSocial", (object?)dto.RazaoSocial ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@Estado", (object?)dto.Estado ?? DBNull.Value);
             cmd.Parameters.AddWithValue("@EnderecoCompleto", (object?)dto.EnderecoCompleto ?? DBNull.Value);
@@ -59,9 +62,8 @@ namespace LotoReg.Service
             await cmd.ExecuteNonQueryAsync();
         }
 
-        public async Task CadastrarEmpresa(CadastroEmpresaSorteioDto empresa, byte[] contratoSocialPdf)
+        public async Task CadastrarEmpresa(CadastroEmpresaSorteioDto empresa, byte[] contratoSocialPdf, int idUsuario)
         {
-            // Validação básica
             if (string.IsNullOrWhiteSpace(empresa.RazaoSocial) ||
                 string.IsNullOrWhiteSpace(empresa.CNPJ) ||
                 string.IsNullOrWhiteSpace(empresa.Estado) ||
@@ -75,64 +77,90 @@ namespace LotoReg.Service
 
             await using var conexao = new NpgsqlConnection(_stringConexao);
             await conexao.OpenAsync();
+            await using var transacao = await conexao.BeginTransactionAsync();
 
-            // Inserindo empresa
-            var queryEmpresa = @"
-            INSERT INTO empresas_sorteio
-                (razao_social, cnpj, data_fundacao, estado, endereco_completo, telefone_comercial, email_contato, contrato_social_pdf, site_plataforma)
-            VALUES
-                (@RazaoSocial, @CNPJ, @DataFundacao, @Estado, @EnderecoCompleto, @TelefoneComercial, @EmailContato, @ContratoSocialPdf, @SitePlataforma)
-            RETURNING id;
-        ";
-
-            int empresaId;
-            await using (var cmd = new NpgsqlCommand(queryEmpresa, conexao))
+            try
             {
-                cmd.Parameters.AddWithValue("@RazaoSocial", empresa.RazaoSocial);
-                cmd.Parameters.AddWithValue("@CNPJ", empresa.CNPJ);
-                cmd.Parameters.AddWithValue("@DataFundacao", empresa.DataFundacao);
-                cmd.Parameters.AddWithValue("@Estado", empresa.Estado);
-                cmd.Parameters.AddWithValue("@EnderecoCompleto", empresa.EnderecoCompleto);
-                cmd.Parameters.AddWithValue("@TelefoneComercial", empresa.TelefoneComercial);
-                cmd.Parameters.AddWithValue("@EmailContato", empresa.EmailContato);
-                cmd.Parameters.AddWithValue("@ContratoSocialPdf", contratoSocialPdf);
-                cmd.Parameters.AddWithValue("@SitePlataforma", (object?)empresa.SitePlataforma ?? DBNull.Value);
+                var queryVerificar = @"
+                    SELECT COUNT(*) FROM empresa WHERE id_usuario = @Id_usuario AND categoria = 'EmpresaSorteio'; ";
 
-                empresaId = Convert.ToInt32(await cmd.ExecuteScalarAsync());
-            }
-
-            // Inserindo sócios (opcional)
-            if (empresa.Socios != null && empresa.Socios.Any())
-            {
-                foreach (var socio in empresa.Socios)
+                await using (var cmdVerificar = new NpgsqlCommand(queryVerificar, conexao, transacao))
                 {
-                    var querySocio = @"
-                    INSERT INTO socios_empresa_sorteio
-                        (empresa_id, nome)
-                    VALUES
-                        (@EmpresaId, @Nome);
-                ";
-                    await using var cmdSocio = new NpgsqlCommand(querySocio, conexao);
-                    cmdSocio.Parameters.AddWithValue("@EmpresaId", empresaId);
-                    cmdSocio.Parameters.AddWithValue("@Nome", socio.Nome);
+                    cmdVerificar.Parameters.AddWithValue("@Id_usuario", idUsuario);
+                    var count = Convert.ToInt32(await cmdVerificar.ExecuteScalarAsync());
 
-                    await cmdSocio.ExecuteNonQueryAsync();
+                    if (count > 0)
+                        throw new InvalidOperationException("Usuário já possui uma empresa cadastrada na categoria 'EmpresaSorteio'.");
                 }
+
+                const string queryEmpresa = @"
+                    INSERT INTO empresa
+                        (id_usuario, razao_social, cnpj, data_fundacao, estado, endereco_completo,
+                         telefone_comercial, email_contato, contrato_social_pdf, site_plataforma, categoria)
+                    VALUES
+                        (@IdUsuario, @RazaoSocial, @CNPJ, @DataFundacao, @Estado, @EnderecoCompleto,
+                         @TelefoneComercial, @EmailContato, @ContratoSocialPdf, @SitePlataforma, 'EmpresaSorteio')
+                    RETURNING id;
+                ";
+
+                int empresaId;
+                await using (var cmd = new NpgsqlCommand(queryEmpresa, conexao, transacao))
+                {
+                    cmd.Parameters.AddWithValue("@IdUsuario", idUsuario);
+                    cmd.Parameters.AddWithValue("@RazaoSocial", empresa.RazaoSocial);
+                    cmd.Parameters.AddWithValue("@CNPJ", empresa.CNPJ);
+                    cmd.Parameters.AddWithValue("@DataFundacao", empresa.DataFundacao);
+                    cmd.Parameters.AddWithValue("@Estado", empresa.Estado);
+                    cmd.Parameters.AddWithValue("@EnderecoCompleto", empresa.EnderecoCompleto);
+                    cmd.Parameters.AddWithValue("@TelefoneComercial", empresa.TelefoneComercial);
+                    cmd.Parameters.AddWithValue("@EmailContato", empresa.EmailContato);
+                    cmd.Parameters.AddWithValue("@ContratoSocialPdf", contratoSocialPdf);
+                    cmd.Parameters.AddWithValue("@SitePlataforma", (object?)empresa.SitePlataforma ?? DBNull.Value);
+
+                    empresaId = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+                }
+
+                if (empresa.Socios != null && empresa.Socios.Any())
+                {
+                    foreach (var socio in empresa.Socios)
+                    {
+                        const string querySocio = @"
+                            INSERT INTO socios_empresa (empresa_id, nome)
+                            VALUES (@EmpresaId, @Nome);
+                        ";
+
+                        await using var cmdSocio = new NpgsqlCommand(querySocio, conexao, transacao);
+                        cmdSocio.Parameters.AddWithValue("@EmpresaId", empresaId);
+                        cmdSocio.Parameters.AddWithValue("@Nome", socio.Nome);
+                        await cmdSocio.ExecuteNonQueryAsync();
+                    }
+                }
+
+                await transacao.CommitAsync();
+            }
+            catch
+            {
+                await transacao.RollbackAsync();
+                throw;
             }
         }
 
-        public async Task<BuscarEmpresaSorteio?> ObterEmpresa(int idEmpresaSorteio)
+        public async Task<BuscarEmpresaSorteio?> ObterEmpresa(int idUsuario)
         {
-            using var conexao = new NpgsqlConnection(_stringConexao);
+            await using var conexao = new NpgsqlConnection(_stringConexao);
             await conexao.OpenAsync();
 
-            string queryEmpresa = @"SELECT * FROM empresas_sorteio WHERE id = @id";
-            using var cmdEmpresa = new NpgsqlCommand(queryEmpresa, conexao);
-            cmdEmpresa.Parameters.AddWithValue("@id", idEmpresaSorteio);
+            const string queryEmpresa = @"
+                SELECT * FROM empresa
+                WHERE id_usuario = @IdUsuario AND categoria = 'EmpresaSorteio';
+            ";
+
+            await using var cmdEmpresa = new NpgsqlCommand(queryEmpresa, conexao);
+            cmdEmpresa.Parameters.AddWithValue("@IdUsuario", idUsuario);
 
             BuscarEmpresaSorteio? empresa = null;
 
-            using (var reader = await cmdEmpresa.ExecuteReaderAsync())
+            await using (var reader = await cmdEmpresa.ExecuteReaderAsync())
             {
                 if (await reader.ReadAsync())
                 {
@@ -157,11 +185,15 @@ namespace LotoReg.Service
             if (empresa == null)
                 return null;
 
-            string querySocios = @"SELECT nome FROM socios_empresa_sorteio WHERE empresa_id = @empresaId";
-            using var cmdSocios = new NpgsqlCommand(querySocios, conexao);
-            cmdSocios.Parameters.AddWithValue("@empresaId", idEmpresaSorteio);
+            const string querySocios = @"
+                SELECT nome FROM socios_empresa
+                WHERE empresa_id = (SELECT id FROM empresa WHERE id_usuario = @IdUsuario AND categoria = 'EmpresaSorteio');
+            ";
 
-            using var readerSocios = await cmdSocios.ExecuteReaderAsync();
+            await using var cmdSocios = new NpgsqlCommand(querySocios, conexao);
+            cmdSocios.Parameters.AddWithValue("@IdUsuario", idUsuario);
+
+            await using var readerSocios = await cmdSocios.ExecuteReaderAsync();
             while (await readerSocios.ReadAsync())
             {
                 empresa.Socios!.Add(new SociosDto
@@ -172,9 +204,5 @@ namespace LotoReg.Service
 
             return empresa;
         }
-
-
     }
 }
-               
-

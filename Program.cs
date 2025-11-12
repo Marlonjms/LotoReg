@@ -3,6 +3,7 @@ using LotoReg.Service;
 using Helpers;
 using LotoReg.Serviços;
 
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Registra o CORS (antes do Build)
@@ -34,6 +35,10 @@ builder.Services.AddScoped<IRedefinicaoSenha, RedefinicaoSenhaServico>();
 builder.Services.AddScoped<IVerificacaoEmail, VerificacaoEmailServico>();
 builder.Services.AddScoped<ICadastroEmpresaBet, CadastroEmpresaBetService>();
 builder.Services.AddScoped<ICadastroEmpresaSorteio, CadastroEmpresaSorteioService>();
+builder.Services.AddScoped<IRequerimentoBet, RequerimentoBetService>();
+builder.Services.AddScoped<IRequerimentoSorteio, RequerimentoSorteioService>();
+builder.Services.AddScoped<IVisaoGeral, VisaoGeralService>();
+
 
 builder.Services.AddSingleton<GmailServico>();
 

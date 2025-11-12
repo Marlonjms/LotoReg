@@ -19,55 +19,67 @@ namespace LotoReg.Controller
             _empresaService = empresaService;
         }
 
-    
-
+        /// <summary>
+        ///ex: socios[{"Nome":"João"},{"Nome":"Maria"}]
+        /// </summary>
+        [Authorize]
         [HttpPost("Cadastrar")]
         public async Task<IActionResult> Cadastrar([FromForm] CadastroEmpresaSorteioDto dto, IFormFile contratoSocial)
         {
-            if (contratoSocial == null || contratoSocial.Length == 0)
-                return BadRequest(new { erro = "O contrato social (PDF) é obrigatório." });
-
-            // Desserializa os sócios do JSON, se existir
-            List<SocioEmpresaSorteioDto>? socios = null;
-            if (!string.IsNullOrWhiteSpace(dto.SociosJson))
+            try
             {
-                socios = JsonConvert.DeserializeObject<List<SocioEmpresaSorteioDto>>(dto.SociosJson);
+                var idUsuario = UserHelper.ObterIdUsuarioLogado(HttpContext);
+                if (idUsuario <= 0)
+                    return Unauthorized(new { mensagem = "Usuário não autenticado." });
 
+                if (contratoSocial == null || contratoSocial.Length == 0)
+                    return BadRequest(new { erro = "O contrato social (PDF) é obrigatório." });
+
+                List<SocioEmpresaSorteioDto>? socios = null;
+                if (!string.IsNullOrWhiteSpace(dto.SociosJson))
+                {
+                    socios = JsonConvert.DeserializeObject<List<SocioEmpresaSorteioDto>>(dto.SociosJson);
+                }
+
+                using var ms = new MemoryStream();
+                await contratoSocial.CopyToAsync(ms);
+                byte[] pdfBytes = ms.ToArray();
+
+                var empresa = new CadastroEmpresaSorteioDto
+                {
+                    RazaoSocial = dto.RazaoSocial,
+                    CNPJ = dto.CNPJ,
+                    DataFundacao = dto.DataFundacao,
+                    Estado = dto.Estado,
+                    EnderecoCompleto = dto.EnderecoCompleto,
+                    TelefoneComercial = dto.TelefoneComercial,
+                    EmailContato = dto.EmailContato,
+                    SitePlataforma = dto.SitePlataforma,
+                    SociosJson = dto.SociosJson,
+                    Socios = socios
+                };
+
+                await _empresaService.CadastrarEmpresa(empresa, pdfBytes, idUsuario);
+
+                return Ok(new { mensagem = "Empresa cadastrada com sucesso!" });
             }
-
-            using var ms = new MemoryStream();
-            await contratoSocial.CopyToAsync(ms);
-            byte[] pdfBytes = ms.ToArray();
-
-            // Adiciona sócios desserializados no DTO
-            var empresa = new CadastroEmpresaSorteioDto
-
+            catch (Exception ex)
             {
-                RazaoSocial = dto.RazaoSocial,
-                CNPJ = dto.CNPJ,
-                DataFundacao = dto.DataFundacao,
-                Estado = dto.Estado,
-                EnderecoCompleto = dto.EnderecoCompleto,
-                TelefoneComercial = dto.TelefoneComercial,
-                EmailContato = dto.EmailContato,
-                SitePlataforma = dto.SitePlataforma,
-                SociosJson = dto.SociosJson,
-                Socios = socios
-            };
-
-            await _empresaService.CadastrarEmpresa(empresa, pdfBytes);
-
-            return Ok(new { mensagem = "Empresa cadastrada com sucesso!" });
+                return StatusCode(500, new { erro = ex.Message });
+            }
         }
 
-     
+        [Authorize]
         [HttpPut("Atualizar")]
-        public async Task<IActionResult> Atualizar(int idEmpresaSorteio, [FromBody] AtualizarEmpresaSorteioDto dto)
+        public async Task<IActionResult> Atualizar([FromBody] AtualizarEmpresaSorteioDto dto)
         {
             try
             {
+                var idUsuario = UserHelper.ObterIdUsuarioLogado(HttpContext);
+                if (idUsuario <= 0)
+                 return Unauthorized(new { mensagem = "Usuário não autenticado." });
 
-                await _empresaService.AtualizarEmpresa(idEmpresaSorteio, dto);
+                await _empresaService.AtualizarEmpresa(idUsuario, dto);
                 return Ok(new { mensagem = "Dados da empresa atualizados com sucesso!" });
             }
             catch (KeyNotFoundException ex)
@@ -80,12 +92,17 @@ namespace LotoReg.Controller
             }
         }
 
+        [Authorize]
         [HttpGet("ObterEmpresa")]
-        public async Task<IActionResult> ObterEmpresa(int idEmpresaSorteio)
+        public async Task<IActionResult> ObterEmpresa()
         {
             try
             {
-                var empresa = await _empresaService.ObterEmpresa(idEmpresaSorteio);
+                var idUsuario = UserHelper.ObterIdUsuarioLogado(HttpContext);
+                if (idUsuario <= 0)
+                    return Unauthorized(new { mensagem = "Usuário não autenticado." });
+
+                var empresa = await _empresaService.ObterEmpresa(idUsuario);
 
                 if (empresa == null)
                     return NotFound(new { mensagem = "Empresa não encontrada." });

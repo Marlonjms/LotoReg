@@ -6,8 +6,8 @@ namespace LotoReg.Interface
 {
     public interface ICadastroEmpresaBet
     {
-        Task CadastrarEmpresa(CadastroEmpresaBetDto empresa, byte[] contratoSocialPdf);
+        Task CadastrarEmpresa(CadastroEmpresaBetDto empresa, byte[] contratoSocialPdf, int idUsuario);
         Task AtualizarEmpresa(int usuarioId, AtualizarEmpresaBetDto dto);
-        Task<BuscarEmpresaBet?> ObterEmpresa(int empresaId);
+        Task<BuscarEmpresaBet?> ObterEmpresa(int idUsuario);
     }
 }
